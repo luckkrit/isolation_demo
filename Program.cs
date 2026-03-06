@@ -2,6 +2,7 @@ namespace isolation_demo;
 
 using System;
 using System.Diagnostics;
+using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.Threading;
 using YamlDotNet.Serialization;
@@ -202,10 +203,19 @@ class TerminalController
             Console.ReadLine();
             return null;
         }
-        var yaml = File.ReadAllText(configPath);
-        var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
-        var file = deserializer.Deserialize<ConfigFile>(yaml);
-        return file;
+        ConfigFile configFile = null;
+        try
+        {
+
+            var yaml = File.ReadAllText(configPath);
+            var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
+            configFile = deserializer.Deserialize<ConfigFile>(yaml);
+        }
+        catch (Exception)
+        {
+            Console.WriteLine("Invalid config yaml file structure");
+        }
+        return configFile;
     }
     // static void RunAll(string yamlPath, Process A, Process B)
     // {
@@ -268,39 +278,47 @@ class TerminalController
             Console.ReadLine();
             return;
         }
-        var yaml = File.ReadAllText(yamlPath);
-        var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
-        var file = deserializer.Deserialize<ScenariosFile>(yaml);
-
-        foreach (var scenario in file.Scenarios)
+        try
         {
-            Console.WriteLine("\n" + new string('=', 60));
-            Console.WriteLine($"  {scenario.Name}");
-            Console.WriteLine(new string('=', 60));
 
-            // Setup
-            Console.WriteLine("\n  [SETUP]");
-            foreach (var step in scenario.Setup)
-                foreach (var kv in step)
-                    if (kv.Key == "user1") Send(processes[0], kv.Value, "user1");
+            var yaml = File.ReadAllText(yamlPath);
+            var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
+            var file = deserializer.Deserialize<ScenariosFile>(yaml);
 
-            Wait("Setup complete - Start Demo");
+            foreach (var scenario in file.Scenarios)
+            {
+                Console.WriteLine("\n" + new string('=', 60));
+                Console.WriteLine($"  {scenario.Name}");
+                Console.WriteLine(new string('=', 60));
 
-            // Steps
-            foreach (var step in scenario.Steps)
-                foreach (var kv in step)
-                {
-                    string comment = step.ContainsKey("comment") ? step["comment"] : "";
-                    switch (kv.Key)
+                // Setup
+                Console.WriteLine("\n  [SETUP]");
+                foreach (var step in scenario.Setup)
+                    foreach (var kv in step)
+                        if (kv.Key == "user1") Send(processes[0], kv.Value, "user1");
+
+                Wait("Setup complete - Start Demo");
+
+                // Steps
+                foreach (var step in scenario.Steps)
+                    foreach (var kv in step)
                     {
-                        case "user1": Send(processes[0], kv.Value, "user1", comment); break;
-                        case "user2": Send(processes[1], kv.Value, "user2", comment); break;
-                        case "user3": Send(processes[2], kv.Value, "user3", comment); break;
-                        case "wait": Wait(kv.Value); break;
+                        string comment = step.ContainsKey("comment") ? step["comment"] : "";
+                        switch (kv.Key)
+                        {
+                            case "user1": Send(processes[0], kv.Value, "user1", comment); break;
+                            case "user2": Send(processes[1], kv.Value, "user2", comment); break;
+                            case "user3": Send(processes[2], kv.Value, "user3", comment); break;
+                            case "wait": Wait(kv.Value); break;
+                        }
                     }
-                }
 
-            Wait("End of scenario, Enter to continue...");
+                Wait("End of scenario, Enter to continue...");
+            }
+        }
+        catch (Exception)
+        {
+            Console.WriteLine("Invalid scenario yaml structure");
         }
     }
 

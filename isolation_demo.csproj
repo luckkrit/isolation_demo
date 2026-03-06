@@ -28,6 +28,12 @@
     <Content Include="phantom_read.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <Content Include="phantom_write.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="incorrect_summary_problem.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Content Include="config.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
