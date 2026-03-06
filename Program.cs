@@ -93,7 +93,7 @@ class TerminalController
         SetConsoleMode(consoleHandle, consoleMode);
     }
 
-    static Process OpenTerminal(string name, string password, string db, int x, int y)
+    static Process OpenTerminal(string name, string password, string db, int x, int y, int width, int height)
     {
         string psql = @"C:\Program Files\PostgreSQL\18\bin\psql.exe";
         string color = name == "user1" ? "2" : "3";
@@ -121,7 +121,7 @@ class TerminalController
         proc.Refresh();
 
         // จัด position
-        MoveWindow(proc.MainWindowHandle, x, y, 900, 500, true);
+        MoveWindow(proc.MainWindowHandle, x, y, width, height, true);
 
         return proc;
     }
@@ -207,13 +207,64 @@ class TerminalController
         var file = deserializer.Deserialize<ConfigFile>(yaml);
         return file;
     }
-    static void RunAll(string yamlPath, Process A, Process B)
+    // static void RunAll(string yamlPath, Process A, Process B)
+    // {
+    //     if (!File.Exists(yamlPath))
+    //     {
+    //         string fullPath = Path.GetFullPath(yamlPath);
+    //         Console.WriteLine($"ERROR: scenarios.yaml not found!");
+    //         Console.WriteLine($"       Expected at: {fullPath}");
+    //         Console.ReadLine();
+    //         return;
+    //     }
+    //     var yaml = File.ReadAllText(yamlPath);
+    //     var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
+    //     var file = deserializer.Deserialize<ScenariosFile>(yaml);
+
+    //     foreach (var scenario in file.Scenarios)
+    //     {
+    //         Console.WriteLine("\n" + new string('=', 60));
+    //         Console.WriteLine($"  {scenario.Name}");
+    //         Console.WriteLine(new string('=', 60));
+
+    //         // Setup
+    //         Console.WriteLine("\n  [SETUP]");
+    //         foreach (var step in scenario.Setup)
+    //             foreach (var kv in step)
+    //                 if (kv.Key == "user1") Send(A, kv.Value, "user1");
+
+    //         Wait("Setup complete - Start Demo");
+
+    //         // Steps
+    //         foreach (var step in scenario.Steps)
+    //             foreach (var kv in step)
+    //             {
+    //                 string comment = step.ContainsKey("comment") ? step["comment"] : "";
+    //                 switch (kv.Key)
+    //                 {
+    //                     case "user1": Send(A, kv.Value, "user1", comment); break;
+    //                     case "user2": Send(B, kv.Value, "user2", comment); break;
+    //                     case "wait": Wait(kv.Value); break;
+    //                 }
+    //             }
+
+    //         Wait("End of scenario, Enter to continue...");
+    //     }
+    // }
+
+    static void RunAll(string yamlPath, List<Process> processes)
     {
         if (!File.Exists(yamlPath))
         {
             string fullPath = Path.GetFullPath(yamlPath);
             Console.WriteLine($"ERROR: scenarios.yaml not found!");
             Console.WriteLine($"       Expected at: {fullPath}");
+            Console.ReadLine();
+            return;
+        }
+        if (processes.Count == 0)
+        {
+            Console.WriteLine($"ERROR: process not create!");
             Console.ReadLine();
             return;
         }
@@ -231,7 +282,7 @@ class TerminalController
             Console.WriteLine("\n  [SETUP]");
             foreach (var step in scenario.Setup)
                 foreach (var kv in step)
-                    if (kv.Key == "user1") Send(A, kv.Value, "user1");
+                    if (kv.Key == "user1") Send(processes[0], kv.Value, "user1");
 
             Wait("Setup complete - Start Demo");
 
@@ -242,8 +293,9 @@ class TerminalController
                     string comment = step.ContainsKey("comment") ? step["comment"] : "";
                     switch (kv.Key)
                     {
-                        case "user1": Send(A, kv.Value, "user1", comment); break;
-                        case "user2": Send(B, kv.Value, "user2", comment); break;
+                        case "user1": Send(processes[0], kv.Value, "user1", comment); break;
+                        case "user2": Send(processes[1], kv.Value, "user2", comment); break;
+                        case "user3": Send(processes[2], kv.Value, "user3", comment); break;
                         case "wait": Wait(kv.Value); break;
                     }
                 }
@@ -267,20 +319,21 @@ class TerminalController
         {
             AllocConsole();
             DisableQuickEdit();
-            MoveMainWindow(x: 0, y: 510, w: 1860, h: 400);  // ← ด้านล่าง
 
             // ← เพิ่ม 2 บรรทัดนี้
             SetConsoleCtrlHandler(OnConsoleClose, true);
 
-            MoveMainWindow(x: 0, y: 510, w: 1860, h: 400);
 
             var config = LoadConfig("config.yaml");
 
             int workingWidth = 1920;
+            int workingHeight = 1080;
             if (Screen.PrimaryScreen != null)
             {
                 workingWidth = Screen.PrimaryScreen.WorkingArea.Width;
+                workingHeight = Screen.PrimaryScreen.WorkingArea.Height;
             }
+            MoveMainWindow(x: 0, y: workingHeight / 2, w: workingWidth, h: workingHeight / 2);
             if (config != null && config.Configs.Count > 0 && config.Configs[0].Users.Count > 0)
             {
                 foreach (var conf in config.Configs)
@@ -289,7 +342,7 @@ class TerminalController
                     int terminalWidth = workingWidth / config.Configs[0].Users.Count;
                     foreach (var user in conf.Users)
                     {
-                        processes.Add(OpenTerminal(user.Username, user.Password, conf.Database, x: i * terminalWidth, y: 0));
+                        processes.Add(OpenTerminal(user.Username, user.Password, conf.Database, x: i * terminalWidth, y: 0, workingWidth / 2, workingHeight / 2));
                         i++;
                     }
                 }
@@ -298,8 +351,8 @@ class TerminalController
             {
 
                 Console.WriteLine("config.yaml not found! using default config.");
-                var processA = OpenTerminal("user1", "user1", "postgres", x: 0, y: 0);
-                var processB = OpenTerminal("user2", "user2", "postgres", x: workingWidth / 2, y: 0);
+                var processA = OpenTerminal("user1", "user1", "postgres", x: 0, y: 0, workingWidth / 2, workingHeight / 2);
+                var processB = OpenTerminal("user2", "user2", "postgres", x: workingWidth / 2, y: 0, workingWidth / 2, workingHeight / 2);
                 processes.Add(processA);
                 processes.Add(processB);
             }
@@ -329,7 +382,8 @@ class TerminalController
                 // รัน RunAll บน thread แยก ไม่ถูก block โดย UI
                 var thread = new Thread(() =>
                 {
-                    RunAll(yamlPath, A, B);
+                    // RunAll(yamlPath, A, B);
+                    RunAll(yamlPath, processes);
                 });
                 thread.SetApartmentState(ApartmentState.STA); // SendKeys ต้องการ STA
                 thread.Start();
