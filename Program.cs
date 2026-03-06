@@ -342,7 +342,7 @@ class TerminalController
                     int terminalWidth = workingWidth / config.Configs[0].Users.Count;
                     foreach (var user in conf.Users)
                     {
-                        processes.Add(OpenTerminal(user.Username, user.Password, conf.Database, x: i * terminalWidth, y: 0, workingWidth / 2, workingHeight / 2));
+                        processes.Add(OpenTerminal(user.Username, user.Password, conf.Database, x: i * terminalWidth, y: 0, workingWidth / conf.Users.Count, workingHeight / 2));
                         i++;
                     }
                 }
