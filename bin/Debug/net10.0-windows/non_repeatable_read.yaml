@@ -1,0 +1,27 @@
+# non_repeatable_read.yaml
+scenarios:
+  - name: "Non-Repeatable Read"
+    setup:
+      - user1: "DROP TABLE IF EXISTS accounts;"
+      - user1: "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - user1: "INSERT INTO accounts VALUES (1, 1000);"
+    steps:
+      - user1: "BEGIN;"
+        comment: "user1 Start transaction"
+      - user2: "BEGIN;"
+        comment: "user2 Start transaction"
+      - user2: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user2 get 1000"
+      - user1: "UPDATE accounts SET balance = 2000 WHERE id = 1;"
+        comment: "user1 update but not commit!"
+      - user1: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user1 get 2000"
+      - user2: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user2 get 1000"
+      - user1: "COMMIT;"
+        comment: "user1 commit!"
+      - wait: What do you think user2 will get 1000 or 2000?
+      - user2: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user2 get 2000"
+      - user2: "COMMIT;"
+        comment: "user2 commit for ends transaction"
