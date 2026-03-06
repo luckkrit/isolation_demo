@@ -16,7 +16,10 @@ class User
 
 class Config
 {
+    public string DbType { get; set; }
     public string Database { get; set; }
+    public string Host { get; set; }
+    public string Port { get; set; }
     public List<User> Users { get; set; }
 }
 
@@ -94,21 +97,45 @@ class TerminalController
         SetConsoleMode(consoleHandle, consoleMode);
     }
 
-    static Process OpenTerminal(string name, string password, string db, int x, int y, int width, int height)
+    static string GetMySQLScript(string host, string port, string name, string password, string db)
     {
-        string psql = @"C:\Program Files\PostgreSQL\18\bin\psql.exe";
-        string color = name == "user1" ? "2" : "3";
 
-        string bat = System.IO.Path.GetTempFileName() + ".bat";
-        System.IO.File.WriteAllText(bat,
-            $"@echo off\n" +
+        string mysql = @"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe";
+        string color = name == "user1" ? "2" : name == "user2" ? "3" : "4";
+        return $"@echo off\n" +
+               $"chcp 65001 > nul\n" +
+               $"title {name}\n" +
+               $"color {color}\n" +
+               $"reg add HKCU\\Console /v QuickEdit /t REG_DWORD /d 0 /f > nul\n" +
+               $"set MYSQL_PWD={password}\n" +
+               $"\"{mysql}\" -h {host} -P {port} -u {name} -D {db} --prompt=\"[{name}] mysql> \"\n";
+    }
+    static string GetPostgressScript(string host, string port, string name, string password, string db)
+    {
+
+        string psql = @"C:\Program Files\PostgreSQL\18\bin\psql.exe";
+        string color = name == "user1" ? "2" : name == "user2" ? "3" : "4";
+        return $"@echo off\n" +
             $"chcp 65001 > nul\n" +
             $"title {name}\n" +
             $"color {color}\n" +
             $"reg add HKCU\\Console /v QuickEdit /t REG_DWORD /d 0 /f > nul\n" +  // ← เพิ่ม
             $"set PGPASSWORD={password}\n" +
-            $"\"{psql}\" -U {name} -d {db} -v \"PROMPT1=[{name}] %%/%%R%%# \"\n"
-        );
+            $"\"{psql}\" -h {host} -p {port} -U {name} -d {db} -v \"PROMPT1=[{name}] %%/%%R%%# \"\n";
+    }
+
+    static Process OpenTerminal(string dbType, string host, string port, string name, string password, string db, int x, int y, int width, int height)
+    {
+
+        string bat = System.IO.Path.GetTempFileName() + ".bat";
+        if (dbType == "mysql")
+        {
+            System.IO.File.WriteAllText(bat, GetMySQLScript(host, port, name, password, db));
+        }
+        else
+        {
+            System.IO.File.WriteAllText(bat, GetPostgressScript(host, port, name, password, db));
+        }
 
         var proc = Process.Start(new ProcessStartInfo
         {
@@ -163,29 +190,8 @@ class TerminalController
         Console.ReadLine();
     }
 
-    // static void CloseTerminal(Process A, Process B)
-    // {
-    //     if (A == null || B == null) return;
-    //     // แบบ graceful — ส่ง close signal ก่อน
-    //     A.CloseMainWindow();
-    //     B.CloseMainWindow();
-
-    //     // รอ 2 วินาที ถ้ายังไม่ปิดค่อย kill
-    //     if (!A.WaitForExit(2000)) A.Kill();
-    //     if (!B.WaitForExit(2000)) B.Kill();
-    //     Console.WriteLine("Close terminal...");
-    // }
     static void CloseTerminal(List<Process> processes)
     {
-        // if (A == null || B == null) return;
-        // // แบบ graceful — ส่ง close signal ก่อน
-        // A.CloseMainWindow();
-        // B.CloseMainWindow();
-
-        // // รอ 2 วินาที ถ้ายังไม่ปิดค่อย kill
-        // if (!A.WaitForExit(2000)) A.Kill();
-        // if (!B.WaitForExit(2000)) B.Kill();
-        // Console.WriteLine("Close terminal...");
         foreach (var process in processes)
         {
             process.CloseMainWindow();
@@ -208,60 +214,16 @@ class TerminalController
         {
 
             var yaml = File.ReadAllText(configPath);
-            var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
+            var deserializer = new DeserializerBuilder().WithNamingConvention(LowerCaseNamingConvention.Instance).Build();
             configFile = deserializer.Deserialize<ConfigFile>(yaml);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Console.WriteLine($"Config Error: {ex.Message}");
             Console.WriteLine("Invalid config yaml file structure");
         }
         return configFile;
     }
-    // static void RunAll(string yamlPath, Process A, Process B)
-    // {
-    //     if (!File.Exists(yamlPath))
-    //     {
-    //         string fullPath = Path.GetFullPath(yamlPath);
-    //         Console.WriteLine($"ERROR: scenarios.yaml not found!");
-    //         Console.WriteLine($"       Expected at: {fullPath}");
-    //         Console.ReadLine();
-    //         return;
-    //     }
-    //     var yaml = File.ReadAllText(yamlPath);
-    //     var deserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
-    //     var file = deserializer.Deserialize<ScenariosFile>(yaml);
-
-    //     foreach (var scenario in file.Scenarios)
-    //     {
-    //         Console.WriteLine("\n" + new string('=', 60));
-    //         Console.WriteLine($"  {scenario.Name}");
-    //         Console.WriteLine(new string('=', 60));
-
-    //         // Setup
-    //         Console.WriteLine("\n  [SETUP]");
-    //         foreach (var step in scenario.Setup)
-    //             foreach (var kv in step)
-    //                 if (kv.Key == "user1") Send(A, kv.Value, "user1");
-
-    //         Wait("Setup complete - Start Demo");
-
-    //         // Steps
-    //         foreach (var step in scenario.Steps)
-    //             foreach (var kv in step)
-    //             {
-    //                 string comment = step.ContainsKey("comment") ? step["comment"] : "";
-    //                 switch (kv.Key)
-    //                 {
-    //                     case "user1": Send(A, kv.Value, "user1", comment); break;
-    //                     case "user2": Send(B, kv.Value, "user2", comment); break;
-    //                     case "wait": Wait(kv.Value); break;
-    //                 }
-    //             }
-
-    //         Wait("End of scenario, Enter to continue...");
-    //     }
-    // }
-
     static void RunAll(string yamlPath, List<Process> processes)
     {
         if (!File.Exists(yamlPath))
@@ -295,7 +257,11 @@ class TerminalController
                 Console.WriteLine("\n  [SETUP]");
                 foreach (var step in scenario.Setup)
                     foreach (var kv in step)
+                    {
                         if (kv.Key == "user1") Send(processes[0], kv.Value, "user1");
+                        if (kv.Key == "user2") Send(processes[1], kv.Value, "user2");
+                        if (kv.Key == "user3") Send(processes[2], kv.Value, "user3");
+                    }
 
                 Wait("Setup complete - Start Demo");
 
@@ -360,7 +326,7 @@ class TerminalController
                     int terminalWidth = workingWidth / config.Configs[0].Users.Count;
                     foreach (var user in conf.Users)
                     {
-                        processes.Add(OpenTerminal(user.Username, user.Password, conf.Database, x: i * terminalWidth, y: 0, workingWidth / conf.Users.Count, workingHeight / 2));
+                        processes.Add(OpenTerminal(conf.DbType, conf.Host, conf.Port, user.Username, user.Password, conf.Database, x: i * terminalWidth, y: 0, workingWidth / conf.Users.Count, workingHeight / 2));
                         i++;
                     }
                 }
@@ -369,29 +335,11 @@ class TerminalController
             {
 
                 Console.WriteLine("config.yaml not found! using default config.");
-                var processA = OpenTerminal("user1", "user1", "postgres", x: 0, y: 0, workingWidth / 2, workingHeight / 2);
-                var processB = OpenTerminal("user2", "user2", "postgres", x: workingWidth / 2, y: 0, workingWidth / 2, workingHeight / 2);
+                var processA = OpenTerminal("postgres", "localahost", "5432", "user1", "user1", "postgres", x: 0, y: 0, workingWidth / 2, workingHeight / 2);
+                var processB = OpenTerminal("postgres", "localhost", "5432", "user2", "user2", "postgres", x: workingWidth / 2, y: 0, workingWidth / 2, workingHeight / 2);
                 processes.Add(processA);
                 processes.Add(processB);
             }
-
-
-            // if (config != null && config.Configs.Count > 0 && config.Configs[0].Users.Count >= 2)
-            // {
-            //     Console.WriteLine("Load config file OK.");
-            //     A = OpenTerminal(config.Configs[0].Users[0].Username, config.Configs[0].Users[0].Password, config.Configs[0].Database, x: 0, y: 0);
-            //     B = OpenTerminal(config.Configs[0].Users[1].Username, config.Configs[0].Users[1].Password, config.Configs[0].Database, x: 960, y: 0);
-            // }
-            // else
-            // {
-            //     Console.WriteLine("config.yaml not found! using default config.");
-            //     A = OpenTerminal("user1", "user1", "postgres", x: 0, y: 0);
-            //     B = OpenTerminal("user2", "user2", "postgres", x: 960, y: 0);
-            // }
-
-
-            // _A = A;  // ← เก็บไว้ให้ OnConsoleClose ใช้
-            // _B = B;
 
             Console.WriteLine("Load yamlPath = " + yamlPath);
             if (yamlPath != "-1")
