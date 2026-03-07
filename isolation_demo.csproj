@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MySql.Data" Version="9.6.0" />
+    <PackageReference Include="Npgsql" Version="10.0.1" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
@@ -40,7 +42,10 @@
     <Content Include="config.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content> -->
-    <Content Include="scenarios\*.yaml">
+    <Content Include="scenarios\isolation\*.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="scenarios\problems\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="profiles\*.yaml">
