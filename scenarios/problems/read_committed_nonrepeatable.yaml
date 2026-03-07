@@ -1,0 +1,42 @@
+scenarios:
+  - name: "Read Committed : Nonrepeatable Read Problem"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - "INSERT INTO accounts VALUES (10, 1000);"
+    steps:
+      - actor: user1
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;"
+        comment: "T1 start with READ COMMITTED"
+      - actor: user1
+        sql: "SET LOCAL statement_timeout = '5s';"
+        comment: "T1 cancel if blocked more than 5 seconds"
+      - actor: user2
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;"
+        comment: "T2 start with READ COMMITTED"
+      - actor: user2
+        sql: "SET LOCAL statement_timeout = '5s';"
+        comment: "T2 cancel if blocked more than 5 seconds"
+      - actor: user1
+        sql: "SELECT * FROM accounts WHERE id = 10;"
+        comment: "T1 reads balance=1000"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "T2 reads balance=1000"
+      - actor: user2
+        sql: "UPDATE accounts SET balance = 40 WHERE id = 10;"
+        comment: "T2 updates balance to 40"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "T2 sees own change: balance=40"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "T2 commits"
+      - wait: "T2 committed balance=40. T1 already read 1000. What will T1 read now?"
+      - actor: user1
+        sql: "SELECT * FROM accounts WHERE id = 10;"
+        comment: "T1 reads balance=40 — different from first read! Nonrepeatable read!"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "T1 commit"

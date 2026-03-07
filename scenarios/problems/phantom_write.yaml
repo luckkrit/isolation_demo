@@ -1,0 +1,70 @@
+scenarios:
+  - name: "Phantom Write (No Fix)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS reservations;"
+      - "CREATE TABLE reservations (id SERIAL PRIMARY KEY, reserve_date DATE);"
+    steps:
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 Start transaction"
+      - actor: user1
+        sql: "SELECT COUNT(*) from reservations WHERE reserve_date = '2025-01-10';"
+        comment: "user1 gets 0 rows"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 Start transaction"
+      - actor: user2
+        sql: "SELECT COUNT(*) from reservations WHERE reserve_date = '2025-01-10';"
+        comment: "user2 gets 0 rows"
+      - actor: user1
+        sql: "INSERT INTO reservations(reserve_date) VALUES('2025-01-10');"
+        comment: "user1 insert reserve date '2025-01-10'"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commit!"
+      - actor: user2
+        sql: "INSERT INTO reservations(reserve_date) VALUES('2025-01-10');"
+        comment: "user2 insert reserve date '2025-01-10', it is more than 1"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commit!"
+      - wait: "What do you think?"
+      - actor: user1
+        sql: "SELECT COUNT(*) from reservations WHERE reserve_date = '2025-01-10';"
+        comment: "user1 gets 2 rows!"
+
+  - name: "Phantom Write (Fix!)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS reservations;"
+      - "CREATE TABLE reservations (id SERIAL PRIMARY KEY, reserve_date DATE UNIQUE);"
+    steps:
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 Start transaction"
+      - actor: user1
+        sql: "SELECT COUNT(*) from reservations WHERE reserve_date = '2025-01-10';"
+        comment: "user1 gets 0 rows"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 Start transaction"
+      - actor: user2
+        sql: "SELECT COUNT(*) from reservations WHERE reserve_date = '2025-01-10';"
+        comment: "user2 gets 0 rows"
+      - actor: user1
+        sql: "INSERT INTO reservations(reserve_date) VALUES('2025-01-10');"
+        comment: "user1 insert reserve date '2025-01-10'"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commit!"
+      - actor: user2
+        sql: "INSERT INTO reservations(reserve_date) VALUES('2025-01-10');"
+        comment: "user2 insert reserve date '2025-01-10', it is more than 1"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commit!"
+      - wait: "What do you think?"
+      - actor: user1
+        sql: "SELECT COUNT(*) from reservations WHERE reserve_date = '2025-01-10';"
+        comment: "user1 gets 1 rows!"

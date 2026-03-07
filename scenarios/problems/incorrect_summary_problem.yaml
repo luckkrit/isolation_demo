@@ -1,0 +1,43 @@
+scenarios:
+  - name: "Incorrect Summary Problem"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, name TEXT, balance INT);"
+      - "INSERT INTO accounts VALUES (1, 'A', 1000), (2, 'B', 1000), (3, 'C', 1000);"
+    steps:
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "T2 start - will calculate SUM/AVG"
+      - actor: user2
+        sql: "SELECT SUM(balance), AVG(balance) FROM accounts WHERE id = 3;"
+        comment: "T2 read C = 1000, sum = 1000"
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "T1 start - will update A and B"
+      - actor: user1
+        sql: "UPDATE accounts SET balance = 950 WHERE id = 1;"
+        comment: "T1 A = 1000 - 50 = 950"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "T1 commit A"
+      - wait: "T1 committed A=950, now T2 reads A"
+      - actor: user2
+        sql: "SELECT SUM(balance), AVG(balance) FROM accounts WHERE id IN (1,3);"
+        comment: "T2 read A = 950 (after update!) sum = 1950"
+      - actor: user1
+        sql: "BEGIN;"
+      - actor: user1
+        sql: "UPDATE accounts SET balance = 1050 WHERE id = 2;"
+        comment: "T1 B = 1000 + 50 = 1050"
+      - actor: user2
+        sql: "SELECT SUM(balance), AVG(balance) FROM accounts WHERE id IN (1,2,3);"
+        comment: "T2 read B = 1000 (before T1 updates!) avg = 983.33 WRONG!"
+      - actor: user2
+        sql: "COMMIT;"
+      - actor: user1
+        sql: "COMMIT;"
+      - wait: "Correct avg should be 1000 but T2 got 983.33!"
+      - actor: user1
+        sql: "SELECT AVG(balance) FROM accounts;"
+        comment: "Real avg = 1000"

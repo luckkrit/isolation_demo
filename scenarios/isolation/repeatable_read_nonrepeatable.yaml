@@ -1,0 +1,48 @@
+scenarios:
+  - name: "Repeatable Read : Nonrepeatable Read — Prevented"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - "INSERT INTO accounts VALUES (10, 1000);"
+    steps:
+      - actor: user1
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "T1 start with REPEATABLE READ"
+      - actor: user1
+        sql: "SET LOCAL statement_timeout = '5s';"
+        comment: "T1 cancel if blocked more than 5 seconds"
+      - actor: user1
+        sql: "SELECT * FROM accounts WHERE id = 10;"
+        comment: "T1 reads balance=1000"
+      - actor: user2
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "T2 start with REPEATABLE READ"
+      - actor: user2
+        sql: "SET LOCAL statement_timeout = '5s';"
+        comment: "T2 cancel if blocked more than 5 seconds"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "T2 reads: id=10, balance=1000"
+      - actor: user1
+        sql: "INSERT INTO accounts VALUES (11, 111);"
+        comment: "T1 inserts row (11, 111)"
+      - actor: user1
+        sql: "SELECT count(*) FROM accounts;"
+        comment: "T1 sees count=2"
+      - actor: user2
+        sql: "UPDATE accounts SET balance = 40 WHERE id = 10;"
+        comment: "T2 updates balance to 40"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "T2 sees own change: balance=40"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "T2 commits"
+      - wait: "T2 committed balance=40. T1 first read was 1000. Will T1 see the change?"
+      - actor: user1
+        sql: "SELECT * FROM accounts WHERE id = 10;"
+        comment: "T1 still reads balance=1000 — Nonrepeatable Read prevented!"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "T1 commit"

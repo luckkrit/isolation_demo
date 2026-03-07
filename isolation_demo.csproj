@@ -13,7 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="scenarios.yaml">
+    <!-- <Content Include="scenarios.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="non_repeatable_delete.yaml">
@@ -38,6 +38,12 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="config.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content> -->
+    <Content Include="scenarios\*.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="profiles\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

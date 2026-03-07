@@ -1,0 +1,36 @@
+scenarios:
+  - name: "Non-Repeatable Read"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - "INSERT INTO accounts VALUES (1, 1000);"
+    steps:
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 Start transaction"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 Start transaction"
+      - actor: user2
+        sql: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user2 get 1000"
+      - actor: user1
+        sql: "UPDATE accounts SET balance = 2000 WHERE id = 1;"
+        comment: "user1 update but not commit!"
+      - actor: user1
+        sql: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user1 get 2000"
+      - actor: user2
+        sql: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user2 get 1000"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commit!"
+      - wait: "What do you think user2 will get 1000 or 2000?"
+      - actor: user2
+        sql: "SELECT * FROM accounts WHERE id = 1;"
+        comment: "user2 get 2000"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commit for ends transaction"

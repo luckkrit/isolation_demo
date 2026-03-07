@@ -1,0 +1,30 @@
+scenarios:
+  - name: "Phantom Read"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - "INSERT INTO accounts VALUES (1, 110000);"
+      - "INSERT INTO accounts VALUES (2, 120000);"
+      - "INSERT INTO accounts VALUES (3, 170000);"
+      - "INSERT INTO accounts VALUES (4, 1300);"
+    steps:
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 Start transaction"
+      - actor: user1
+        sql: "SELECT COUNT(*) from accounts WHERE balance > 100000;"
+        comment: "user1 gets 3 rows"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 Start transaction"
+      - actor: user2
+        sql: "INSERT INTO accounts(id, balance) VALUES (5, 180000);"
+        comment: "user2 insert another row with balance 180000"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commit"
+      - wait: "How many rows when balance > 100000 ?"
+      - actor: user1
+        sql: "SELECT COUNT(*) from accounts WHERE balance > 100000;"
+        comment: "user1 gets 4 rows"

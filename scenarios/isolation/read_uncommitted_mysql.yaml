@@ -1,0 +1,47 @@
+scenarios:
+  - name: "Dirty Read - READ UNCOMMITTED (CASE 1 Commit)"
+    profiles: ["mysql"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - "INSERT INTO accounts VALUES (1, 1000), (2, 2000), (3, 3000);"
+    steps:
+      - actor: user1
+        sql: "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;"
+        comment: "user1 set isolation to READ UNCOMMITTED"
+      - actor: user1
+        sql: "SHOW VARIABLES LIKE 'transaction_isolation';"
+        comment: "user1 verify: should show READ-UNCOMMITTED"
+      - actor: user2
+        sql: "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;"
+        comment: "user2 set isolation to READ UNCOMMITTED"
+      - actor: user2
+        sql: "SHOW VARIABLES LIKE 'transaction_isolation';"
+        comment: "user2 verify: should show READ-UNCOMMITTED"
+      - actor: user1
+        sql: "START TRANSACTION;"
+        comment: "user1 starts transaction"
+      - actor: user1
+        sql: "INSERT INTO accounts VALUES (10, 1000);"
+        comment: "user1 inserts row (10, 1000) - NOT committed yet"
+      - actor: user1
+        sql: "SELECT * FROM accounts;"
+        comment: "user1 sees: 1,2,3,10"
+      - actor: user2
+        sql: "START TRANSACTION;"
+        comment: "user2 starts transaction"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "user2 sees: 1,2,3,10 - DIRTY READ! user1 not committed yet"
+      - actor: user2
+        sql: "INSERT INTO accounts VALUES (11, 1100);"
+        comment: "user2 inserts row (11, 1100) - NOT committed yet"
+      - actor: user1
+        sql: "SELECT * FROM accounts;"
+        comment: "user1 sees: 1,2,3,10,11 - DIRTY READ! user2 not committed yet"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits"
