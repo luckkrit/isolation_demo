@@ -211,16 +211,24 @@ class ConsoleForm : Form
     private Color _mainColor;
     private string _prompt;
     private string _inputBuffer = "";
+    public static float FontSize = 13f;
 
     public ConsoleForm(string username, string password,
                        string host, string port,
-                       string database, string dbType)
+                       string database, string dbType, int userIndex = 0)
     {
         Text = $"{username} [{dbType}]";
         BackColor = Color.Black;
         FormBorderStyle = FormBorderStyle.Sizable;
 
-        _mainColor = dbType == "mysql" ? Color.Yellow : Color.LimeGreen;
+        // _mainColor = dbType == "mysql" ? Color.Yellow : Color.LimeGreen;
+        _mainColor = userIndex switch
+        {
+            0 => Color.LimeGreen,
+            1 => Color.Yellow,
+            2 => Color.Cyan,
+            _ => Color.White
+        };
         _prompt = dbType == "mysql"
             ? $"[{username}] mysql> "
             : $"[{username}] postgres=# ";
@@ -230,7 +238,7 @@ class ConsoleForm : Form
             Dock = DockStyle.Fill,
             BackColor = Color.Black,
             ForeColor = _mainColor,
-            Font = new Font("Consolas", 10),
+            Font = new Font("Consolas", FontSize),
             BorderStyle = BorderStyle.None,
             ScrollBars = RichTextBoxScrollBars.Vertical,
             ShortcutsEnabled = false,
@@ -540,7 +548,7 @@ class Program
                         var form = OpenConsoleForm(
                             profile, user,
                             x: i * terminalW, y: 0,
-                            w: terminalW, h: terminalAreaH);
+                            w: terminalW, h: terminalAreaH, userIndex: i);
                         formMap[user.Username] = form;
                         _activeForms.Add(form);
                     }
@@ -621,7 +629,7 @@ class Program
     //  Open ConsoleForm terminal
     // ─────────────────────────────────────────
     static ConsoleForm OpenConsoleForm(Profile profile, ProfileUser user,
-                                        int x, int y, int w, int h)
+                                        int x, int y, int w, int h, int userIndex = 0)
     {
         ConsoleForm form = null;
         var ready = new ManualResetEventSlim(false);
@@ -632,7 +640,7 @@ class Program
             form = new ConsoleForm(
                 user.Username, user.Password,
                 profile.Host, profile.Port,
-                profile.Database, profile.Type);
+                profile.Database, profile.Type, userIndex);
             form.StartPosition = FormStartPosition.Manual;
             form.Left = x;
             form.Top = y;
