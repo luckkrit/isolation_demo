@@ -1,5 +1,5 @@
 type: "postgres"
-client: "C:\\Program Files\\PostgreSQL\\18\\bin\\psql2.exe"
+client: "C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe"
 host: "localhost"
 port: "5432"
 database: "postgres"
