@@ -916,9 +916,9 @@ class Program
         {
             if (profile.Type == "mysql")
             {
-                RunRootSql(profile, $"DROP USER IF EXISTS '{user.Username}'@'localhost';");
-                RunRootSql(profile, $"CREATE USER '{user.Username}'@'localhost' IDENTIFIED BY '{user.Password}';");
-                RunRootSql(profile, $"GRANT ALL PRIVILEGES ON {profile.Database}.* TO '{user.Username}'@'localhost';");
+                RunRootSql(profile, $"DROP USER IF EXISTS '{user.Username}'@'%';");
+                RunRootSql(profile, $"CREATE USER '{user.Username}'@'%' IDENTIFIED BY '{user.Password}';");
+                RunRootSql(profile, $"GRANT ALL PRIVILEGES ON {profile.Database}.* TO '{user.Username}'@'%';");
                 RunRootSql(profile, "FLUSH PRIVILEGES;");
             }
             else
@@ -960,7 +960,7 @@ class Program
         foreach (var user in profile.Users)
         {
             if (profile.Type == "mysql")
-                RunRootSql(profile, $"DROP USER IF EXISTS '{user.Username}'@'localhost';");
+                RunRootSql(profile, $"DROP USER IF EXISTS '{user.Username}'@'%';");
             else
             {
                 RunRootSql(profile, $"REASSIGN OWNED BY {user.Username} TO {profile.RootUser};");
