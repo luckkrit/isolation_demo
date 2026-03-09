@@ -1,0 +1,35 @@
+scenarios:
+  - name: "Write Skew - Predicate Write Conflict (REPEATABLE READ)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS doctors;"
+      - "CREATE TABLE doctors (id INT PRIMARY KEY, on_duty BOOLEAN NOT NULL);"
+      - "INSERT INTO doctors VALUES (1, TRUE), (2, TRUE);"
+    steps:
+      - actor: user1
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "user1 starts transaction with REPEATABLE READ isolation"
+      - actor: user1
+        sql: "SELECT COUNT(*) FROM doctors WHERE on_duty = TRUE;"
+        comment: "user1 counts on-duty doctors - result = 2"
+      - actor: user1
+        sql: "UPDATE doctors SET on_duty = FALSE WHERE id = 1;"
+        comment: "user1 sets doctor 1 off-duty, assuming doctor 2 is still on duty"
+      - actor: user2
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "user2 starts transaction with REPEATABLE READ isolation"
+      - actor: user2
+        sql: "SELECT COUNT(*) FROM doctors WHERE on_duty = TRUE;"
+        comment: "user2 counts on-duty doctors - result = 2 (same snapshot as user1)"
+      - actor: user2
+        sql: "UPDATE doctors SET on_duty = FALSE WHERE id = 2;"
+        comment: "user2 sets doctor 2 off-duty, assuming doctor 1 is still on duty"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits"
+      - actor: user1
+        sql: "SELECT * FROM doctors;"
+        comment: "final state: both doctors are off-duty (id=1 FALSE, id=2 FALSE) - hospital constraint violated!"

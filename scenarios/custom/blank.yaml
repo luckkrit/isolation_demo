@@ -1,0 +1,11 @@
+scenarios:
+  - name: "Custom scenario"
+    profiles: ["postgres"]
+    init:
+    steps:
+      - actor: user1
+        sql: "-- For user1, Please type sql below..."
+        comment: "Feel free to use it."
+      - actor: user2
+        sql: "-- For user2, Please type sql below..."
+        comment: "Feel free to use it."

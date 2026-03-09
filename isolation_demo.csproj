@@ -42,7 +42,13 @@
     <Content Include="config.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content> -->
+    <Content Include="scenarios\custom\*.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Content Include="scenarios\isolation\*.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="scenarios\lock\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="scenarios\problems\*.yaml">

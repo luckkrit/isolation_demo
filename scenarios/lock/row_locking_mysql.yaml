@@ -1,0 +1,38 @@
+scenarios:
+  - name: "Row Locking - SELECT FOR UPDATE (Update Lock)"
+    profiles: ["mysql"]
+    init:
+      - "DROP TABLE IF EXISTS offices;"
+      - "CREATE TABLE offices (officeCode INT PRIMARY KEY, city VARCHAR(50), state VARCHAR(50));"
+      - "INSERT INTO offices VALUES (1, 'San Francisco', 'CA'), (2, 'Boston', 'MA');"
+    steps:
+      - actor: user1
+        sql: "SET GLOBAL TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;"
+        comment: "set global isolation to READ UNCOMMITTED"
+      - actor: user1
+        sql: "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;"
+        comment: "user1 set session isolation to READ UNCOMMITTED"
+      - actor: user2
+        sql: "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;"
+        comment: "user2 set session isolation to READ UNCOMMITTED"
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 starts transaction"
+      - actor: user1
+        sql: "SELECT * FROM offices WHERE officeCode = 1 FOR UPDATE;"
+        comment: "user1 locks row officeCode=1 with FOR UPDATE - blocks others from updating this row"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 starts transaction"
+      - actor: user2
+        sql: "UPDATE offices SET state = 'CA-2' WHERE officeCode = 2;"
+        comment: "user2 updates officeCode=2 - not locked, succeeds immediately"
+      - actor: user2
+        sql: "UPDATE offices SET state = 'CA-1' WHERE officeCode = 1;"
+        comment: "user2 tries to update officeCode=1 - BLOCKED by user1's FOR UPDATE lock"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits - releases FOR UPDATE lock, user2's blocked UPDATE can now proceed"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits"

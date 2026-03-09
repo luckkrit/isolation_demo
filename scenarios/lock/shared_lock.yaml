@@ -1,0 +1,35 @@
+scenarios:
+  - name: "Table Locking - SHARE MODE (Read Lock)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS messages;"
+      - "CREATE TABLE messages (id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message VARCHAR(100) NOT NULL);"
+      - "INSERT INTO messages(message) VALUES ('Hello');"
+    steps:
+      - actor: user1
+        sql: "SELECT * FROM messages;"
+        comment: "user1 reads initial data"
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 starts transaction"
+      - actor: user1
+        sql: "LOCK TABLE messages IN SHARE MODE;"
+        comment: "user1 acquires SHARE MODE lock - blocks INSERT/UPDATE/DELETE from others"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 starts transaction"
+      - actor: user2
+        sql: "SET LOCAL statement_timeout = '2s';"
+        comment: "user2 sets timeout to 2 seconds"
+      - actor: user2
+        sql: "INSERT INTO messages(message) VALUES ('Bye Byte');"
+        comment: "user2 tries to insert - BLOCKED by user1's SHARE MODE lock, will timeout after 2s"
+      - actor: user1
+        sql: "INSERT INTO messages(message) VALUES ('user insert');"
+        comment: "user1 inserts while holding SHARE MODE lock - allowed for lock owner"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits - releases SHARE MODE lock"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits (or already timed out)"

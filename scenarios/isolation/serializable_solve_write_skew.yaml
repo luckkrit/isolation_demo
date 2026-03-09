@@ -1,0 +1,36 @@
+scenarios:
+  - name: "Solve Write Skew - Predicate Write Conflict (SERIALIZABLE)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS doctors;"
+      - "CREATE TABLE doctors (id INT PRIMARY KEY, on_duty BOOLEAN NOT NULL);"
+      - "INSERT INTO doctors VALUES (1, TRUE), (2, TRUE);"
+      - "UPDATE doctors SET on_duty = TRUE;"
+    steps:
+      - actor: user1
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;"
+        comment: "user1 starts transaction with SERIALIZABLE isolation"
+      - actor: user1
+        sql: "SELECT COUNT(*) FROM doctors WHERE on_duty = TRUE;"
+        comment: "user1 counts on-duty doctors - result = 2"
+      - actor: user1
+        sql: "UPDATE doctors SET on_duty = FALSE WHERE id = 1;"
+        comment: "user1 sets doctor 1 off-duty, assuming doctor 2 is still on duty"
+      - actor: user2
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;"
+        comment: "user2 starts transaction with SERIALIZABLE isolation"
+      - actor: user2
+        sql: "SELECT COUNT(*) FROM doctors WHERE on_duty = TRUE;"
+        comment: "user2 counts on-duty doctors - result = 2 (same snapshot as user1)"
+      - actor: user2
+        sql: "UPDATE doctors SET on_duty = FALSE WHERE id = 2;"
+        comment: "user2 sets doctor 2 off-duty, assuming doctor 1 is still on duty"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits - passes"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits - SERIALIZABLE detects conflict, one transaction will be aborted"
+      - actor: user1
+        sql: "SELECT * FROM doctors;"
+        comment: "final state: id=1 FALSE, id=2 FALSE - both off-duty (write skew not prevented here)"

@@ -1,0 +1,38 @@
+scenarios:
+  - name: "Deadlock - MySQL Example"
+    profiles: ["mysql"]
+    init:
+      - "DROP TABLE IF EXISTS temp;"
+      - "CREATE TABLE temp (id INT PRIMARY KEY, value INT);"
+      - "INSERT INTO temp VALUES (1, 100), (2, 200), (3, 300);"
+    steps:
+      - actor: user2
+        sql: "SELECT * FROM temp;"
+        comment: "user2 reads initial data"
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 starts transaction"
+      - actor: user1
+        sql: "UPDATE temp SET value = 120 WHERE id = 1;"
+        comment: "user1 locks row id=1"
+      - actor: user1
+        sql: "SELECT * FROM temp;"
+        comment: "user1 reads current state"
+      - actor: user2
+        sql: "BEGIN;"
+        comment: "user2 starts transaction"
+      - actor: user2
+        sql: "UPDATE temp SET value = 150 WHERE id = 2;"
+        comment: "user2 locks row id=2"
+      - actor: user1
+        sql: "UPDATE temp SET value = 250 WHERE id = 2;"
+        comment: "user1 tries to lock row id=2 - BLOCKED, user2 holds it"
+      - actor: user2
+        sql: "UPDATE temp SET value = 150 WHERE id = 1;"
+        comment: "user2 tries to lock row id=1 - BLOCKED, user1 holds it - DEADLOCK!"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits - MySQL detects deadlock and rolls back one transaction automatically"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits"

@@ -1,0 +1,38 @@
+scenarios:
+  - name: "Consistent Snapshot - REPEATABLE READ"
+    profiles: ["postgres-3users"]
+    init:
+      - "DROP TABLE IF EXISTS offices;"
+      - "CREATE TABLE offices (id INT PRIMARY KEY, city VARCHAR(50));"
+      - "INSERT INTO offices VALUES (1,'Bangkok'),(2,'Tokyo'),(3,'London'),(4,'Paris'),(5,'Sydney'),(6,'NYC'),(7,'Berlin'),(8,'Seoul'),(9,'Singapore'),(10,'Dubai');"
+    steps:
+      - actor: user1
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "user1 starts transaction at T1 - snapshot is taken here"
+      - actor: user1
+        sql: "SELECT COUNT(*) FROM offices;"
+        comment: "user1 reads COUNT at T1 - result = 10"
+      - actor: user2
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;"
+        comment: "user2 starts insert transaction at T2"
+      - actor: user2
+        sql: "INSERT INTO offices VALUES (11, 'Oslo');"
+        comment: "user2 inserts a new office row"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits at T2 - new row now visible to new transactions"
+      - actor: user3
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "user3 starts a fresh transaction at T3 - snapshot taken AFTER user2 committed"
+      - actor: user3
+        sql: "SELECT COUNT(*) FROM offices;"
+        comment: "user3 reads COUNT - result = 11, snapshot includes user2's insert"
+      - actor: user3
+        sql: "COMMIT;"
+        comment: "user3 commits"
+      - actor: user1
+        sql: "SELECT COUNT(*) FROM offices;"
+        comment: "user1 reads COUNT again - still 10! snapshot frozen at T1, never sees user2's insert"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits"

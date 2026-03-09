@@ -1,0 +1,42 @@
+scenarios:
+  - name: "Count Phantom - REPEATABLE READ (Solved)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS accounts;"
+      - "CREATE TABLE accounts (id INT PRIMARY KEY, balance INT);"
+      - "INSERT INTO accounts VALUES (10, 1000);"
+      - "UPDATE accounts SET balance = 1000 WHERE id = 10;"
+    steps:
+      - actor: user1
+        sql: "SET LOCAL statement_timeout = '5s';"
+        comment: "user1 sets statement timeout"
+      - actor: user2
+        sql: "SET LOCAL statement_timeout = '5s';"
+        comment: "user2 sets statement timeout"
+      - actor: user1
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "user1 starts transaction with REPEATABLE READ isolation"
+      - actor: user1
+        sql: "SELECT COUNT(*) FROM accounts WHERE balance < 100;"
+        comment: "user1 counts accounts with balance < 100 - result = 0"
+      - actor: user2
+        sql: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
+        comment: "user2 starts transaction with REPEATABLE READ isolation"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "user2 reads current accounts"
+      - actor: user2
+        sql: "INSERT INTO accounts VALUES (11, 50);"
+        comment: "user2 inserts row (11, 50) - balance 50 falls within user1's predicate (< 100)"
+      - actor: user2
+        sql: "SELECT * FROM accounts;"
+        comment: "user2 sees: rows 10 and 11"
+      - actor: user2
+        sql: "COMMIT;"
+        comment: "user2 commits"
+      - actor: user1
+        sql: "SELECT COUNT(*) FROM accounts WHERE balance < 100;"
+        comment: "user1 counts again - REPEATABLE READ prevents phantom read, result still = 0"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits"

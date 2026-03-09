@@ -1,0 +1,29 @@
+scenarios:
+  - name: "Table Locking - ACCESS EXCLUSIVE MODE (Write Lock)"
+    profiles: ["postgres"]
+    init:
+      - "DROP TABLE IF EXISTS messages;"
+      - "CREATE TABLE messages (id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message VARCHAR(100) NOT NULL);"
+      - "INSERT INTO messages(message) VALUES ('Hello');"
+    steps:
+      - actor: user1
+        sql: "BEGIN;"
+        comment: "user1 starts transaction"
+      - actor: user1
+        sql: "LOCK TABLE messages IN ACCESS EXCLUSIVE MODE;"
+        comment: "user1 acquires ACCESS EXCLUSIVE lock - blocks ALL operations from others including SELECT"
+      - actor: user1
+        sql: "INSERT INTO messages(message) VALUES ('Good Morning');"
+        comment: "user1 inserts while holding exclusive lock"
+      - actor: user1
+        sql: "SELECT * FROM messages;"
+        comment: "user1 reads - allowed as lock owner"
+      - actor: user2
+        sql: "SET lock_timeout = '2s';"
+        comment: "user2 sets lock timeout to 2 seconds"
+      - actor: user2
+        sql: "INSERT INTO messages(message) VALUES ('Bye Bye');"
+        comment: "user2 tries to insert - BLOCKED by ACCESS EXCLUSIVE lock, times out after 2s"
+      - actor: user1
+        sql: "COMMIT;"
+        comment: "user1 commits - releases ACCESS EXCLUSIVE lock"

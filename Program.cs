@@ -1,6 +1,7 @@
 namespace isolation_demo;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
@@ -36,7 +37,6 @@ class Profile
     public string RootPassword { get; set; }
     public List<ProfileUser> Users { get; set; }
 
-    // ── Auto-detect terminal mode ─────────────
     public bool UseFormTerminal =>
         string.IsNullOrWhiteSpace(Client) || !File.Exists(Client);
 }
@@ -211,6 +211,7 @@ class ConsoleForm : Form
     private Color _mainColor;
     private string _prompt;
     private string _inputBuffer = "";
+
     public static float FontSize = 13f;
 
     public ConsoleForm(string username, string password,
@@ -221,7 +222,6 @@ class ConsoleForm : Form
         BackColor = Color.Black;
         FormBorderStyle = FormBorderStyle.Sizable;
 
-        // _mainColor = dbType == "mysql" ? Color.Yellow : Color.LimeGreen;
         _mainColor = userIndex switch
         {
             0 => Color.LimeGreen,
@@ -229,6 +229,7 @@ class ConsoleForm : Form
             2 => Color.Cyan,
             _ => Color.White
         };
+
         _prompt = dbType == "mysql"
             ? $"[{username}] mysql> "
             : $"[{username}] postgres=# ";
@@ -243,13 +244,12 @@ class ConsoleForm : Form
             ScrollBars = RichTextBoxScrollBars.Vertical,
             ShortcutsEnabled = false,
         };
+
         _console.KeyPress += OnKeyPress;
         _console.KeyDown += OnKeyDown;
-
         Controls.Add(_console);
 
         Action<string, Color?> output = (text, color) => AppendLine(text, color);
-
         _terminal = dbType == "mysql"
             ? new MySqlTerminal(host, port, database, username, password, output)
             : new PgTerminal(host, port, database, username, password, output);
@@ -276,7 +276,6 @@ class ConsoleForm : Form
     {
         e.Handled = true;
         if (e.KeyChar == '\r' || e.KeyChar == '\b') return;
-
         _inputBuffer += e.KeyChar;
         _console.SelectionColor = _mainColor;
         _console.AppendText(e.KeyChar.ToString());
@@ -290,10 +289,9 @@ class ConsoleForm : Form
             e.Handled = true;
             string sql = _inputBuffer.Trim();
             _inputBuffer = "";
-            _console.AppendText("\n");  // just newline, prompt already visible
-
+            _console.AppendText("\n");
             if (!string.IsNullOrWhiteSpace(sql))
-                ExecuteSql(sql, echoPrompt: false); // false = don't echo, user already typed it
+                ExecuteSql(sql, echoPrompt: false);
             else
                 AppendPrompt();
         }
@@ -314,8 +312,7 @@ class ConsoleForm : Form
         }
     }
 
-    // Called by orchestrator to send SQL programmatically
-    public static int TypingDelayMs = 30; // adjust globally
+    public static int TypingDelayMs = 30;
 
     public void ExecuteSql(string sql, bool echoPrompt = true)
     {
@@ -339,7 +336,6 @@ class ConsoleForm : Form
 
         try { _terminal.Execute(sql); }
         catch (Exception ex) { AppendLine($"ERROR: {ex.Message}", Color.Red); }
-
         AppendPrompt();
     }
 
@@ -381,7 +377,6 @@ class Program
     [DllImport("kernel32.dll")] static extern bool SetConsoleCtrlHandler(ConsoleCtrlDelegate handler, bool add);
     [DllImport("user32.dll")] static extern bool MoveWindow(IntPtr h, int x, int y, int w, int h2, bool repaint);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
-
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern IntPtr CreateFile(string lpFileName, uint dwDesiredAccess,
         uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition,
@@ -398,12 +393,18 @@ class Program
     const uint FILE_SHARE_WRITE = 0x00000002;
     const uint OPEN_EXISTING = 3;
 
-    // ── State ────────────────────────────────
-    static readonly List<Process> _activeTerminals = new();
-    static readonly List<ConsoleForm> _activeForms = new();
-    static readonly string _profilesDir = "profiles";
+    // ── Thread-safe state ────────────────────
+    // Key = Process.Id for terminals, Key = username for forms
+    static readonly ConcurrentDictionary<int, Process> _activeTerminals = new();
+    static readonly ConcurrentDictionary<string, ConsoleForm> _activeForms = new();
 
+    // ── Shutdown guard ───────────────────────
+    static readonly object _shutdownLock = new();
+    static volatile bool _shuttingDown = false;
+
+    static readonly string _profilesDir = "profiles";
     static SynchronizationContext _uiContext;
+
     // ─────────────────────────────────────────
     //  Entry Point
     // ─────────────────────────────────────────
@@ -414,15 +415,12 @@ class Program
         Application.SetCompatibleTextRenderingDefault(false);
 
         _uiContext = SynchronizationContext.Current
-                 ?? new WindowsFormsSynchronizationContext();
-
+                  ?? new WindowsFormsSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(_uiContext);
-
 
         string scenariosPath = args.Length > 0 ? args[0] : "scenarios.yaml";
         if (!File.Exists(scenariosPath))
             scenariosPath = PickFile();
-
         if (scenariosPath == null) return;
 
         ScenariosFile file;
@@ -447,7 +445,7 @@ class Program
         Console.OutputEncoding = Encoding.UTF8;
 
         var screen = Screen.PrimaryScreen?.WorkingArea
-                       ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
+                        ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
         int screenW = screen.Width;
         int screenH = screen.Height;
         int consoleH = screenH / 3;
@@ -466,16 +464,57 @@ class Program
             }
             finally
             {
-                CloseAll(_activeTerminals);
                 Console.WriteLine("\nPress Enter to exit...");
                 Console.ReadLine();
-                Application.Exit();
+                RequestShutdown();
             }
         });
         bgThread.IsBackground = true;
         bgThread.Start();
 
-        Application.Run(); // keeps message loop alive for ConsoleForm windows
+        Application.Run();
+    }
+
+    // ─────────────────────────────────────────
+    //  Graceful shutdown (called from any thread)
+    // ─────────────────────────────────────────
+    static void RequestShutdown()
+    {
+        lock (_shutdownLock)
+        {
+            if (_shuttingDown) return;
+            _shuttingDown = true;
+        }
+
+        CloseAllTerminals();
+        CloseAllForms();
+
+        // Marshal Application.Exit to the UI thread
+        _uiContext?.Post(_ => Application.Exit(), null);
+    }
+
+    // ─────────────────────────────────────────
+    //  Close all real terminals (thread-safe)
+    // ─────────────────────────────────────────
+    static void CloseAllTerminals()
+    {
+        foreach (var kvp in _activeTerminals.ToArray())
+        {
+            _activeTerminals.TryRemove(kvp.Key, out _);
+            CloseOneProcess(kvp.Value);
+        }
+    }
+
+    // ─────────────────────────────────────────
+    //  Close all form terminals (thread-safe)
+    // ─────────────────────────────────────────
+    static void CloseAllForms()
+    {
+        foreach (var kvp in _activeForms.ToArray())
+        {
+            _activeForms.TryRemove(kvp.Key, out _);
+            try { kvp.Value.Invoke(kvp.Value.Close); } catch { }
+        }
     }
 
     // ─────────────────────────────────────────
@@ -514,7 +553,6 @@ class Program
                 var profile = LoadProfile(profileName);
                 if (profile == null) continue;
 
-                // ── Report terminal mode ──────
                 Console.WriteLine(profile.UseFormTerminal
                     ? "  [MODE] Client not found → using Form terminal"
                     : $"  [MODE] Client found → using real terminal ({profile.Client})");
@@ -529,12 +567,14 @@ class Program
 
                 // ── Create users ──────────────
                 SetupUsers(profile);
+
                 Wait($"Setup complete — press Enter to start [{profileName.ToUpper()}] demo...");
 
                 // ── Open terminals or forms ───
                 int userCount = profile.Users.Count;
                 int terminalW = terminalAreaW / userCount;
 
+                // Local maps for this scenario run only
                 var processMap = new Dictionary<string, Process>();
                 var formMap = new Dictionary<string, ConsoleForm>();
 
@@ -544,23 +584,23 @@ class Program
 
                     if (profile.UseFormTerminal)
                     {
-                        // ── Form terminal ─────
                         var form = OpenConsoleForm(
                             profile, user,
                             x: i * terminalW, y: 0,
                             w: terminalW, h: terminalAreaH, userIndex: i);
+
                         formMap[user.Username] = form;
-                        _activeForms.Add(form);
+                        _activeForms[user.Username] = form;   // register globally
                     }
                     else
                     {
-                        // ── Real terminal ─────
                         var proc = OpenTerminal(
                             profile, user,
                             x: i * terminalW, y: 0,
                             w: terminalW, h: terminalAreaH);
+
                         processMap[user.Username] = proc;
-                        _activeTerminals.Add(proc);
+                        _activeTerminals[proc.Id] = proc;     // register globally
                     }
                 }
 
@@ -584,15 +624,15 @@ class Program
 
                         if (profile.UseFormTerminal)
                         {
-                            if (formMap.ContainsKey(actor))
-                                formMap[actor].ExecuteSql(sql);
+                            if (formMap.TryGetValue(actor, out var form))
+                                form.ExecuteSql(sql);
                             else
                                 Console.WriteLine($"  WARNING: no form for actor '{actor}'");
                         }
                         else
                         {
-                            if (processMap.ContainsKey(actor))
-                                SendToProcess(processMap[actor], sql);
+                            if (processMap.TryGetValue(actor, out var proc))
+                                SendToProcess(proc, sql);
                             else
                                 Console.WriteLine($"  WARNING: no terminal for actor '{actor}'");
                         }
@@ -603,16 +643,17 @@ class Program
 
                 Wait($"End of [{profileName.ToUpper()}] — press Enter to close terminals...");
 
-                // ── Close terminals/forms ─────
-                foreach (var proc in processMap.Values)
+                // ── Close terminals/forms for this scenario ──
+                foreach (var kvp in processMap)
                 {
-                    _activeTerminals.Remove(proc);
-                    CloseOne(proc);
+                    _activeTerminals.TryRemove(kvp.Value.Id, out _);
+                    CloseOneProcess(kvp.Value);
                 }
-                foreach (var form in formMap.Values)
+
+                foreach (var kvp in formMap)
                 {
-                    _activeForms.Remove(form);
-                    form.Invoke(form.Close);
+                    _activeForms.TryRemove(kvp.Key, out _);
+                    try { kvp.Value.Invoke(kvp.Value.Close); } catch { }
                 }
 
                 Thread.Sleep(800);
@@ -634,13 +675,13 @@ class Program
         ConsoleForm form = null;
         var ready = new ManualResetEventSlim(false);
 
-        // Post to UI thread using captured context
         _uiContext.Post(_ =>
         {
             form = new ConsoleForm(
                 user.Username, user.Password,
                 profile.Host, profile.Port,
                 profile.Database, profile.Type, userIndex);
+
             form.StartPosition = FormStartPosition.Manual;
             form.Left = x;
             form.Top = y;
@@ -651,7 +692,7 @@ class Program
         }, null);
 
         ready.Wait();
-        Thread.Sleep(800); // let form connect to DB
+        Thread.Sleep(800);
         return form;
     }
 
@@ -767,14 +808,33 @@ class Program
             else
             {
                 RunRootSql(profile,
-                    $"DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{user.Username}') " +
-                    $"THEN REASSIGN OWNED BY {user.Username} TO {profile.RootUser}; " +
-                    $"DROP OWNED BY {user.Username}; END IF; END $$;");
+                        $"DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{user.Username}') " +
+                        $"THEN REASSIGN OWNED BY {user.Username} TO {profile.RootUser}; " +
+                        $"DROP OWNED BY {user.Username}; END IF; END $$;");
                 RunRootSql(profile, $"DROP USER IF EXISTS {user.Username};");
                 RunRootSql(profile, $"CREATE USER {user.Username} WITH PASSWORD '{user.Password}';");
                 RunRootSql(profile, $"GRANT ALL PRIVILEGES ON DATABASE {profile.Database} TO {user.Username};");
-                RunRootSql(profile, $"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {user.Username};");
-                RunRootSql(profile, $"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {user.Username};");
+
+                // Grant access to ALL existing schemas dynamically
+                RunRootSql(profile,
+                    $"DO $$ DECLARE s TEXT; BEGIN " +
+                    $"FOR s IN SELECT nspname FROM pg_namespace " +
+                    $"WHERE nspname NOT IN ('pg_catalog','information_schema') " +
+                    $"AND nspname NOT LIKE 'pg_%%' LOOP " +
+                    $"EXECUTE 'GRANT USAGE ON SCHEMA ' || s || ' TO {user.Username}'; " +
+                    $"EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ' || s || ' TO {user.Username}'; " +
+                    $"EXECUTE 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ' || s || ' TO {user.Username}'; " +
+                    $"END LOOP; END $$;");
+
+                // Grant access to future tables/sequences created by root
+                RunRootSql(profile,
+                    $"ALTER DEFAULT PRIVILEGES FOR ROLE {profile.RootUser} " +
+                    $"GRANT ALL ON TABLES TO {user.Username};");
+                RunRootSql(profile,
+                    $"ALTER DEFAULT PRIVILEGES FOR ROLE {profile.RootUser} " +
+                    $"GRANT ALL ON SEQUENCES TO {user.Username};");
+
+                Console.WriteLine($"    created: {user.Username}");
             }
             Console.WriteLine($"    created: {user.Username}");
         }
@@ -854,22 +914,28 @@ class Program
     }
 
     // ─────────────────────────────────────────
-    //  Cleanup
+    //  Process Cleanup
     // ─────────────────────────────────────────
-    static void CloseOne(Process proc)
+    static void CloseOneProcess(Process proc)
     {
-        try { proc.CloseMainWindow(); if (!proc.WaitForExit(2000)) proc.Kill(); } catch { }
+        try
+        {
+            if (!proc.HasExited)
+            {
+                proc.CloseMainWindow();
+                if (!proc.WaitForExit(2000))
+                    proc.Kill();
+            }
+        }
+        catch { }
     }
 
-    static void CloseAll(List<Process> list)
-    {
-        foreach (var p in list) CloseOne(p);
-        list.Clear();
-    }
-
+    // ─────────────────────────────────────────
+    //  Win32 Ctrl handler
+    // ─────────────────────────────────────────
     static bool OnClose(uint ctrlType)
     {
-        CloseAll(_activeTerminals);
+        RequestShutdown();
         return false;
     }
 
