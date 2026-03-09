@@ -13,6 +13,8 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using MySql.Data.MySqlClient;
+using NetTopologySuite.Geometries;
+using NetTopologySuite.IO;
 using Npgsql;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -91,17 +93,31 @@ abstract class DbTerminalBase : IDbTerminal
                s.StartsWith("BEGIN") || s.StartsWith("START") ||
                s.StartsWith("COMMIT") || s.StartsWith("ROLLBACK") ||
                s.StartsWith("GRANT") || s.StartsWith("FLUSH") ||
-               s.StartsWith("TRUNCATE") || s.StartsWith("SET");
+               s.StartsWith("TRUNCATE") || s.StartsWith("SET") ||
+               s.StartsWith("LOCK");
     }
 
     protected void PrintResult(IDataReader dr)
     {
+        var wktWriter = new WKTWriter();
+
         var cols = Enumerable.Range(0, dr.FieldCount)
                              .Select(i => dr.GetName(i)).ToList();
         var rows = new List<string[]>();
+
         while (dr.Read())
             rows.Add(Enumerable.Range(0, dr.FieldCount)
-                               .Select(i => dr[i]?.ToString() ?? "NULL").ToArray());
+                               .Select(i =>
+                               {
+                                   try
+                                   {
+                                       var val = dr[i];
+                                       if (val == null || val is DBNull) return "NULL";
+                                       if (val is Geometry geom) return wktWriter.Write(geom);
+                                       return val.ToString();
+                                   }
+                                   catch { return "<unsupported>"; }
+                               }).ToArray());
 
         if (cols.Count == 0) { _writeLine("  (no columns)", null); return; }
 
@@ -143,13 +159,17 @@ class PgTerminal : DbTerminalBase
 
     public override void Connect()
     {
-        _conn = new NpgsqlConnection(_connStr);
-        _conn.Open();
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(_connStr);
+        dataSourceBuilder.UseNetTopologySuite();   // PostGIS geometry → WKT
+        dataSourceBuilder.EnableUnmappedTypes();   // fallback for other unknown types
+        var dataSource = dataSourceBuilder.Build();
+        _conn = dataSource.OpenConnection();
     }
 
     public override void Execute(string sql)
     {
-        using var cmd = new NpgsqlCommand(sql, _conn);
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = sql;
         if (IsNonQuery(sql))
         {
             int rows = cmd.ExecuteNonQuery();
@@ -202,17 +222,47 @@ class MySqlTerminal : DbTerminalBase
 }
 
 // ─────────────────────────────────────────────
+//  TerminalTextBox — intercepts arrow keys
+// ─────────────────────────────────────────────
+class TerminalTextBox : RichTextBox
+{
+    public Action OnUpArrow;
+    public Action OnDownArrow;
+    public Action OnLeftArrow;
+    public Action OnRightArrow;
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == Keys.Up) { OnUpArrow?.Invoke(); return true; }
+        if (keyData == Keys.Down) { OnDownArrow?.Invoke(); return true; }
+        if (keyData == Keys.Left) { OnLeftArrow?.Invoke(); return true; }
+        if (keyData == Keys.Right) { OnRightArrow?.Invoke(); return true; }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+}
+
+// ─────────────────────────────────────────────
 //  ConsoleForm — WinForms fake terminal
 // ─────────────────────────────────────────────
 class ConsoleForm : Form
 {
-    private RichTextBox _console;
+    private TerminalTextBox _console;
     private IDbTerminal _terminal;
     private Color _mainColor;
     private string _prompt;
     private string _inputBuffer = "";
 
+    // ── Caret tracking ────────────────────────
+    private int _caretPos = 0;   // cursor position within _inputBuffer
+    private int _promptStart = 0;   // TextLength when prompt was last written
+
+    // ── Command history ───────────────────────
+    private readonly List<string> _history = new();
+    private int _historyIndex = -1;
+    private string _historyDraft = "";
+
     public static float FontSize = 13f;
+    public static int TypingDelayMs = 30;
 
     public ConsoleForm(string username, string password,
                        string host, string port,
@@ -234,7 +284,7 @@ class ConsoleForm : Form
             ? $"[{username}] mysql> "
             : $"[{username}] postgres=# ";
 
-        _console = new RichTextBox
+        _console = new TerminalTextBox
         {
             Dock = DockStyle.Fill,
             BackColor = Color.Black,
@@ -247,6 +297,58 @@ class ConsoleForm : Form
 
         _console.KeyPress += OnKeyPress;
         _console.KeyDown += OnKeyDown;
+
+        // ── Arrow key handlers ────────────────
+        _console.OnUpArrow = () =>
+        {
+            if (_history.Count == 0) return;
+            if (_historyIndex == -1)
+            {
+                _historyDraft = _inputBuffer;
+                _historyIndex = _history.Count - 1;
+            }
+            else if (_historyIndex > 0)
+            {
+                _historyIndex--;
+            }
+            ReplaceInputBuffer(_history[_historyIndex]);
+        };
+
+        _console.OnDownArrow = () =>
+        {
+            if (_historyIndex == -1) return;
+            if (_historyIndex < _history.Count - 1)
+            {
+                _historyIndex++;
+                ReplaceInputBuffer(_history[_historyIndex]);
+            }
+            else
+            {
+                _historyIndex = -1;
+                ReplaceInputBuffer(_historyDraft);
+            }
+        };
+
+        _console.OnLeftArrow = () =>
+        {
+            if (_caretPos > 0)
+            {
+                _caretPos--;
+                _console.SelectionStart = _promptStart + _caretPos;
+                _console.SelectionLength = 0;
+            }
+        };
+
+        _console.OnRightArrow = () =>
+        {
+            if (_caretPos < _inputBuffer.Length)
+            {
+                _caretPos++;
+                _console.SelectionStart = _promptStart + _caretPos;
+                _console.SelectionLength = 0;
+            }
+        };
+
         Controls.Add(_console);
 
         Action<string, Color?> output = (text, color) => AppendLine(text, color);
@@ -276,10 +378,13 @@ class ConsoleForm : Form
     {
         e.Handled = true;
         if (e.KeyChar == '\r' || e.KeyChar == '\b') return;
-        _inputBuffer += e.KeyChar;
-        _console.SelectionColor = _mainColor;
-        _console.AppendText(e.KeyChar.ToString());
-        _console.ScrollToCaret();
+
+        // Reset history browsing when user types
+        _historyIndex = -1;
+
+        _inputBuffer = _inputBuffer.Insert(_caretPos, e.KeyChar.ToString());
+        _caretPos++;
+        RefreshInputLine();
     }
 
     void OnKeyDown(object sender, KeyEventArgs e)
@@ -289,30 +394,57 @@ class ConsoleForm : Form
             e.Handled = true;
             string sql = _inputBuffer.Trim();
             _inputBuffer = "";
+            _caretPos = 0;
+            _historyIndex = -1;
+            _historyDraft = "";
             _console.AppendText("\n");
+
             if (!string.IsNullOrWhiteSpace(sql))
+            {
+                // Add to history, avoid consecutive duplicates
+                if (_history.Count == 0 || _history[^1] != sql)
+                    _history.Add(sql);
+
                 ExecuteSql(sql, echoPrompt: false);
+            }
             else
+            {
                 AppendPrompt();
+            }
         }
         else if (e.KeyCode == Keys.Back)
         {
             e.Handled = true;
-            if (_inputBuffer.Length > 0)
+            if (_caretPos > 0)
             {
-                _inputBuffer = _inputBuffer[..^1];
-                _console.SelectionStart = _console.TextLength - 1;
-                _console.SelectionLength = 1;
-                _console.SelectedText = "";
+                _inputBuffer = _inputBuffer.Remove(_caretPos - 1, 1);
+                _caretPos--;
+                RefreshInputLine();
             }
-        }
-        else if (e.KeyCode is Keys.Left or Keys.Right or Keys.Up or Keys.Down)
-        {
-            e.Handled = true;
         }
     }
 
-    public static int TypingDelayMs = 30;
+    // ── Redraws input area and restores caret ──
+    void RefreshInputLine()
+    {
+        _console.SelectionStart = _promptStart;
+        _console.SelectionLength = _console.TextLength - _promptStart;
+        _console.SelectionColor = _mainColor;
+        _console.SelectedText = _inputBuffer;
+
+        // Restore caret to correct position within input
+        _console.SelectionStart = _promptStart + _caretPos;
+        _console.SelectionLength = 0;
+        _console.ScrollToCaret();
+    }
+
+    // ── Replace entire input buffer (history navigation) ──
+    void ReplaceInputBuffer(string newText)
+    {
+        _inputBuffer = newText;
+        _caretPos = _inputBuffer.Length; // caret at end
+        RefreshInputLine();
+    }
 
     public void ExecuteSql(string sql, bool echoPrompt = true)
     {
@@ -353,6 +485,8 @@ class ConsoleForm : Form
     {
         _console.SelectionColor = _mainColor;
         _console.AppendText(_prompt);
+        _promptStart = _console.TextLength; // record where input area begins
+        _caretPos = 0;
         _console.ScrollToCaret();
         _console.Focus();
     }
@@ -394,7 +528,6 @@ class Program
     const uint OPEN_EXISTING = 3;
 
     // ── Thread-safe state ────────────────────
-    // Key = Process.Id for terminals, Key = username for forms
     static readonly ConcurrentDictionary<int, Process> _activeTerminals = new();
     static readonly ConcurrentDictionary<string, ConsoleForm> _activeForms = new();
 
@@ -437,7 +570,6 @@ class Program
             return;
         }
 
-        // ── Allocate orchestrator console ─────
         AllocConsole();
         ReopenConsoleOutput();
         DisableQuickEdit();
@@ -445,13 +577,12 @@ class Program
         Console.OutputEncoding = Encoding.UTF8;
 
         var screen = Screen.PrimaryScreen?.WorkingArea
-                        ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
+                         ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
         int screenW = screen.Width;
         int screenH = screen.Height;
         int consoleH = screenH / 3;
         MoveMainWindow(0, screenH - consoleH, screenW, consoleH);
 
-        // ── Run scenarios in background ───────
         var bgThread = new Thread(() =>
         {
             try
@@ -476,7 +607,7 @@ class Program
     }
 
     // ─────────────────────────────────────────
-    //  Graceful shutdown (called from any thread)
+    //  Graceful shutdown
     // ─────────────────────────────────────────
     static void RequestShutdown()
     {
@@ -485,17 +616,11 @@ class Program
             if (_shuttingDown) return;
             _shuttingDown = true;
         }
-
         CloseAllTerminals();
         CloseAllForms();
-
-        // Marshal Application.Exit to the UI thread
         _uiContext?.Post(_ => Application.Exit(), null);
     }
 
-    // ─────────────────────────────────────────
-    //  Close all real terminals (thread-safe)
-    // ─────────────────────────────────────────
     static void CloseAllTerminals()
     {
         foreach (var kvp in _activeTerminals.ToArray())
@@ -505,9 +630,6 @@ class Program
         }
     }
 
-    // ─────────────────────────────────────────
-    //  Close all form terminals (thread-safe)
-    // ─────────────────────────────────────────
     static void CloseAllForms()
     {
         foreach (var kvp in _activeForms.ToArray())
@@ -557,7 +679,6 @@ class Program
                     ? "  [MODE] Client not found → using Form terminal"
                     : $"  [MODE] Client found → using real terminal ({profile.Client})");
 
-                // ── Init SQL ──────────────────
                 if (scenario.Init?.Count > 0)
                 {
                     Console.WriteLine("\n  [INIT]");
@@ -565,16 +686,13 @@ class Program
                         RunRootSql(profile, sql);
                 }
 
-                // ── Create users ──────────────
                 SetupUsers(profile);
 
                 Wait($"Setup complete — press Enter to start [{profileName.ToUpper()}] demo...");
 
-                // ── Open terminals or forms ───
                 int userCount = profile.Users.Count;
                 int terminalW = terminalAreaW / userCount;
 
-                // Local maps for this scenario run only
                 var processMap = new Dictionary<string, Process>();
                 var formMap = new Dictionary<string, ConsoleForm>();
 
@@ -590,7 +708,7 @@ class Program
                             w: terminalW, h: terminalAreaH, userIndex: i);
 
                         formMap[user.Username] = form;
-                        _activeForms[user.Username] = form;   // register globally
+                        _activeForms[user.Username] = form;
                     }
                     else
                     {
@@ -600,11 +718,10 @@ class Program
                             w: terminalW, h: terminalAreaH);
 
                         processMap[user.Username] = proc;
-                        _activeTerminals[proc.Id] = proc;     // register globally
+                        _activeTerminals[proc.Id] = proc;
                     }
                 }
 
-                // ── Run steps ─────────────────
                 foreach (var step in scenario.Steps)
                 {
                     string actor = step.ContainsKey("actor") ? step["actor"] : null;
@@ -643,7 +760,6 @@ class Program
 
                 Wait($"End of [{profileName.ToUpper()}] — press Enter to close terminals...");
 
-                // ── Close terminals/forms for this scenario ──
                 foreach (var kvp in processMap)
                 {
                     _activeTerminals.TryRemove(kvp.Value.Id, out _);
@@ -808,9 +924,9 @@ class Program
             else
             {
                 RunRootSql(profile,
-                        $"DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{user.Username}') " +
-                        $"THEN REASSIGN OWNED BY {user.Username} TO {profile.RootUser}; " +
-                        $"DROP OWNED BY {user.Username}; END IF; END $$;");
+                    $"DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{user.Username}') " +
+                    $"THEN REASSIGN OWNED BY {user.Username} TO {profile.RootUser}; " +
+                    $"DROP OWNED BY {user.Username}; END IF; END $$;");
                 RunRootSql(profile, $"DROP USER IF EXISTS {user.Username};");
                 RunRootSql(profile, $"CREATE USER {user.Username} WITH PASSWORD '{user.Password}';");
                 RunRootSql(profile, $"GRANT ALL PRIVILEGES ON DATABASE {profile.Database} TO {user.Username};");
@@ -833,8 +949,6 @@ class Program
                 RunRootSql(profile,
                     $"ALTER DEFAULT PRIVILEGES FOR ROLE {profile.RootUser} " +
                     $"GRANT ALL ON SEQUENCES TO {user.Username};");
-
-                Console.WriteLine($"    created: {user.Username}");
             }
             Console.WriteLine($"    created: {user.Username}");
         }
@@ -930,9 +1044,6 @@ class Program
         catch { }
     }
 
-    // ─────────────────────────────────────────
-    //  Win32 Ctrl handler
-    // ─────────────────────────────────────────
     static bool OnClose(uint ctrlType)
     {
         RequestShutdown();
