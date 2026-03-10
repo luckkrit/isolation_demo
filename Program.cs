@@ -658,6 +658,49 @@ class Program
     }
 
     // ─────────────────────────────────────────
+    //  Test root connection — stops if fails
+    // ─────────────────────────────────────────
+    static bool TestRootConnection(Profile profile)
+    {
+        Console.Write($"  [CHECK] Testing root connection to {profile.Type.ToUpper()}...");
+        try
+        {
+            if (profile.Type == "mysql")
+            {
+                string cs = $"Server={profile.Host};Port={profile.Port};" +
+                            $"Database={profile.Database};Uid={profile.RootUser};Pwd={profile.RootPassword};";
+                using var conn = new MySqlConnection(cs);
+                conn.Open();
+            }
+            else
+            {
+                string cs = $"Host={profile.Host};Port={profile.Port};" +
+                            $"Database={profile.Database};Username={profile.RootUser};Password={profile.RootPassword}";
+                using var conn = new NpgsqlConnection(cs);
+                conn.Open();
+            }
+            Console.WriteLine(" OK");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(" FAILED");
+            Console.WriteLine($"\n  ╔══════════════════════════════════════════════════╗");
+            Console.WriteLine($"  ║  ROOT CONNECTION FAILED — cannot continue        ║");
+            Console.WriteLine($"  ╠══════════════════════════════════════════════════╣");
+            Console.WriteLine($"  ║  Profile : {profile.Type.ToUpper(),-40}║");
+            Console.WriteLine($"  ║  Host    : {profile.Host,-40}║");
+            Console.WriteLine($"  ║  Port    : {profile.Port,-40}║");
+            Console.WriteLine($"  ║  Database: {profile.Database,-40}║");
+            Console.WriteLine($"  ║  RootUser: {profile.RootUser,-40}║");
+            Console.WriteLine($"  ╠══════════════════════════════════════════════════╣");
+            Console.WriteLine($"  ║  Error: {ex.Message.PadRight(43).Substring(0, 43)}║");
+            Console.WriteLine($"  ╚══════════════════════════════════════════════════╝");
+            Console.WriteLine();
+            return false;
+        }
+    }
+    // ─────────────────────────────────────────
     //  Scenario Runner
     // ─────────────────────────────────────────
     static void RunScenarios(ScenariosFile file, int terminalAreaW, int terminalAreaH)
@@ -678,6 +721,13 @@ class Program
                 Console.WriteLine(profile.UseFormTerminal
                     ? "  [MODE] Client not found → using Form terminal"
                     : $"  [MODE] Client found → using real terminal ({profile.Client})");
+
+                if (!TestRootConnection(profile))
+                {
+                    Console.WriteLine("  Skipping this profile. Press Enter to continue...");
+                    Console.ReadLine();
+                    continue;
+                }
 
                 if (scenario.Init?.Count > 0)
                 {

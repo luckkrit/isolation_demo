@@ -1,5 +1,6 @@
 type: "mysql"
-client: "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe"
+# client: "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe"
+client: ""
 host: "localhost"
 port: "3306"
 database: "classicmodels"
